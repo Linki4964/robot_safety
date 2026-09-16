@@ -39,6 +39,15 @@ string[] warning_detail      # human readable explanation per warning
 bool motion_expected         # fresh velocity command within command_timeout
 bool armed                   # motion is allowed by the monitor (step 2 owns policy)
 
+# --------------------------- motion safety (MOT) ----------------------------
+# Motion-safety rule violations, per RSS-001 §6. Kept in their own array rather
+# than merged into `warnings` so that a consumer can distinguish "the robot's
+# data is unhealthy" from "the robot's motion violates a safety rule" -- the two
+# call for different responses and the safety state machine needs both.
+MotionAlert[] motion_alerts
+uint8 motion_status          # worst motion-safety severity, on the TopicHealth scale
+uint16 motion_rules_evaluated  # number of MOT rules that could be judged this tick
+
 # ------------------------------- sensor data --------------------------------
 Odometry odom                # wheel odometry: pose, velocity, TF state
 BatteryState battery         # battery, `available` is false when not monitored

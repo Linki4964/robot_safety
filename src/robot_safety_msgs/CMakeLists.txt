@@ -23,6 +23,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/LaserScan.msg"
   "msg/VelocityCommand.msg"
   "msg/JointState.msg"
+  "msg/MotionAlert.msg"
   DEPENDENCIES
     std_msgs
     geometry_msgs

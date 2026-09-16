@@ -55,6 +55,12 @@ def format_summary(msg: RobotState, age: float) -> str:
         flags.append("obstacle")
     if msg.imu.available and msg.imu.tilt_deg >= 15.0:
         flags.append("tilt")
+    # A MOT rule firing is the single most important thing to surface, so it is
+    # always shown rather than left to the periodic detail block.
+    motion_alerts = list(getattr(msg, "motion_alerts", []))
+    if motion_alerts:
+        worst = max(int(alert.level) for alert in motion_alerts)
+        flags.append("MOT!S%d(%d)" % (worst, len(motion_alerts)))
     flag_text = (" [" + ",".join(flags) + "]") if flags else ""
 
     return (
@@ -95,6 +101,27 @@ def format_detail(msg: RobotState, wall_now: float) -> str:
         % (msg.motion_expected, msg.armed, float(msg.header.stamp.sec)
            + float(msg.header.stamp.nanosec) * 1e-9)
     )
+
+    # Motion-safety violations (RSS-001 §6). Printed separately from the source
+    # findings because they answer a different question: the findings say whether
+    # the data can be trusted, these say whether the motion violates a rule.
+    motion_status = int(getattr(msg, "motion_status", 0))
+    lines.append(
+        "motion_status=%s rules_evaluated=%d alerts=%d"
+        % (status_name(motion_status),
+           int(getattr(msg, "motion_rules_evaluated", 0)),
+           len(getattr(msg, "motion_alerts", [])))
+    )
+    for alert in getattr(msg, "motion_alerts", []):
+        lines.append(
+            "  [S%d/%-8s] %-28s %s"
+            % (
+                int(alert.level),
+                status_name(int(alert.severity)),
+                "%s (%s)" % (alert.code, alert.rule_id),
+                alert.detail,
+            )
+        )
 
     lines.append("-" * 78)
     lines.append("sources:")

@@ -55,6 +55,7 @@ from robot_safety_msgs.msg import (
     Imu,
     JointState,
     LaserScan,
+    MotionAlert as MotionAlertMsg,
     Odometry,
     RobotState,
     TopicHealth,
@@ -84,6 +85,7 @@ from .analyzer import (
     tilt_angle_deg,
     variance_or_negative_one,
 )
+from .motion_safety import MotionSafetyMonitor
 
 SOFTWARE_VERSION = "0.1.0"
 
@@ -557,6 +559,9 @@ class StatePublisher(Node):
             self.config, rate_window_sec=self.config.rate_window_sec
         )
         self.analyzer = Analyzer(self.config, self.tracker)
+        # Motion-safety rules are stateful (acceleration, jerk and persistence
+        # escalations need history), so the evaluator lives for the node's life.
+        self.motion_safety = MotionSafetyMonitor(self.config.motion_safety())
 
         self.robot_id = self.declare_parameter("robot_id", "turtlebot3").value
         self.world_name = self.declare_parameter("world_name", "").value
@@ -782,7 +787,33 @@ class StatePublisher(Node):
                 self.declare_parameter("rate_window_sec", defaults.rate_window_sec).value
             ),
         )
+        self._apply_motion_parameters(config, defaults)
         return config
+
+    # Motion-safety parameters are numerous and share a uniform shape, so they
+    # are declared from one table rather than as twenty near-identical blocks.
+    # name -> (Config attribute, ROS parameter, caster)
+    _MOTION_PARAMETERS = (
+        ("mot_max_linear_mps", "mot.max_linear_mps", float),
+        ("mot_max_angular_rps", "mot.max_angular_rps", float),
+        ("mot_max_actual_linear_mps", "mot.max_actual_linear_mps", float),
+        ("mot_max_actual_angular_rps", "mot.max_actual_angular_rps", float),
+        ("mot_max_linear_accel_mps2", "mot.max_linear_accel_mps2", float),
+        ("mot_max_angular_accel_rps2", "mot.max_angular_accel_rps2", float),
+        ("mot_min_accel_dt_sec", "mot.min_accel_dt_sec", float),
+        ("mot_wheel_separation_m", "mot.wheel_separation_m", float),
+        ("mot_wheel_radius_m", "mot.wheel_radius_m", float),
+        ("mot_max_wheel_speed_mps", "mot.max_wheel_speed_mps", float),
+        ("mot_command_timeout_sec", "mot.command_timeout_sec", float),
+    )
+
+    def _apply_motion_parameters(self, config: Config, defaults: Config) -> None:
+        """Declare and read every MOT threshold from the parameter server."""
+        for attribute, parameter, caster in self._MOTION_PARAMETERS:
+            declared = self.declare_parameter(
+                parameter, getattr(defaults, attribute)
+            ).value
+            setattr(config, attribute, caster(declared))
 
     # -- time ---------------------------------------------------------------
     def ros_now_sec(self) -> float:
@@ -823,9 +854,12 @@ class StatePublisher(Node):
 
         assessment = self.analyzer.assess(state, now=wall)
         motion_expected = self.analyzer.motion_expected(state)
+        # Motion-safety identification runs after the analyzer so it can reuse
+        # the intent/execution verdict the analyzer just wrote into the state.
+        motion_alerts = self.motion_safety.evaluate(state, now_wall=wall)
 
         message = self.build_message(
-            state, assessment, motion_expected, period, wall
+            state, assessment, motion_expected, motion_alerts, period, wall
         )
         self.publisher.publish(message)
 
@@ -835,6 +869,7 @@ class StatePublisher(Node):
         state: MonitorState,
         assessment,
         motion_expected: bool,
+        motion_alerts,
         period: float,
         wall: float,
     ) -> RobotState:
@@ -884,6 +919,30 @@ class StatePublisher(Node):
 
         message.motion_expected = bool(motion_expected)
         message.armed = bool(motion_expected and assessment.status <= 1)
+
+        # Motion-safety alerts are identification only. Nothing here changes a
+        # command, a threshold or a state: acting on a violation is the job of
+        # the safety state machine and the gate (RSS-001 §3.1).
+        for alert in motion_alerts:
+            entry = MotionAlertMsg()
+            entry.header.stamp = stamp
+            entry.header.frame_id = "base_footprint"
+            entry.code = alert.code
+            entry.rule_id = alert.rule_id
+            entry.level = int(alert.level)
+            entry.severity = int(alert.severity)
+            entry.detail = alert.detail
+            entry.value = float(alert.value)
+            entry.threshold = float(alert.threshold)
+            entry.escalated = bool(alert.escalated)
+            entry.stamp_sec = float(alert.stamp_sec)
+            entry.wall_time_sec = float(alert.wall_time_sec)
+            message.motion_alerts.append(entry)
+
+        message.motion_status = int(MotionSafetyMonitor.worst_severity(motion_alerts))
+        message.motion_rules_evaluated = int(
+            self.motion_safety.last_rules_evaluated
+        )
 
         self._fill_odom(message.odom, state.odom)
         self._fill_battery(message.battery, state.battery)

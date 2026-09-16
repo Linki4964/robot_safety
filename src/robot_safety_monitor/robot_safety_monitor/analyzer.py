@@ -265,9 +265,49 @@ class Config:
     # --- joint activity ------------------------------------------------------
     joint_velocity_threshold: float = 1.0e-3
 
+    # --- motion safety (RSS-003 §1, category MOT) ----------------------------
+    # Read by robot_safety_monitor.motion_safety. They live here with the other
+    # thresholds so there is a single place to calibrate, and so the rule module
+    # can import them without a circular dependency.
+    #
+    # RSS-003 scopes this phase to MOT-001..MOT-004 only; the remaining MOT rules
+    # are listed as deferred in that document's §8.
+    mot_max_linear_mps: float = 0.22            # MOT-001 v_max_cmd (manufacturer)
+    mot_max_angular_rps: float = 2.84           # MOT-002 w_max_cmd (manufacturer)
+    # Measured-value limits: looser than the commanded ones, because their job is
+    # to catch a physically runaway base rather than control overshoot.
+    mot_max_actual_linear_mps: float = 0.30     # MOT-001 v_max_actual -> S4
+    mot_max_actual_angular_rps: float = 3.50    # MOT-002 w_max_actual -> S4
+    mot_max_linear_accel_mps2: float = 0.50     # MOT-003 a_max
+    mot_max_angular_accel_rps2: float = 3.00    # MOT-003 alpha_max
+    mot_min_accel_dt_sec: float = 0.020         # MOT-003 differencing floor
+    mot_wheel_separation_m: float = 0.160       # MOT-004 W (must be measured)
+    mot_wheel_radius_m: float = 0.033           # MOT-004 r_wheel (must be measured)
+    mot_max_wheel_speed_mps: float = 0.22       # MOT-004 v_wheel_max
+    mot_command_timeout_sec: float = 0.50       # command freshness for the rules
+
     def is_required(self, source: str) -> bool:
         """True when ``source`` missing is a CRITICAL rather than an ERROR."""
         return source in self.required_sources
+
+    def motion_safety(self):
+        """Build the MOT rule configuration from these thresholds."""
+        from .motion_safety import MotionSafetyConfig
+
+        return MotionSafetyConfig(
+            max_linear_mps=self.mot_max_linear_mps,
+            max_angular_rps=self.mot_max_angular_rps,
+            max_actual_linear_mps=self.mot_max_actual_linear_mps,
+            max_actual_angular_rps=self.mot_max_actual_angular_rps,
+            max_linear_accel_mps2=self.mot_max_linear_accel_mps2,
+            max_angular_accel_rps2=self.mot_max_angular_accel_rps2,
+            min_accel_dt_sec=self.mot_min_accel_dt_sec,
+            wheel_separation_m=self.mot_wheel_separation_m,
+            wheel_radius_m=self.mot_wheel_radius_m,
+            max_wheel_speed_mps=self.mot_max_wheel_speed_mps,
+            command_timeout_sec=self.mot_command_timeout_sec,
+            command_motion_threshold=self.command_motion_threshold,
+        )
 
 
 # --------------------------------------------------------------------------- #

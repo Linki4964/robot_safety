@@ -73,3 +73,43 @@
 
     # --- drivetrain activity ------------------------------------------------
     joints.velocity_threshold: 0.001
+    # --- motion safety: RSS-003 §1, category MOT ----------------------------
+    # Implemented rules in this phase: MOT-001 .. MOT-004. The remaining MOT
+    # rules (005, 009, 010, 011, 012) are registered as deferred in RSS-003 §8.
+    #
+    # Every threshold here has a calibration source, because RSS-001 §14.2
+    # requires each one to trace to: standard / manufacturer / measurement /
+    # risk assessment. The values below are TurtleBot3 Burger manufacturer
+    # ratings; RSS-003 §0 marks the MOT-004 geometry as "measured", i.e. W and
+    # r_wheel must be measured before that rule can be trusted.
+
+    # MOT-001 / MOT-002: commanded speed limits (manufacturer rating)
+    mot.max_linear_mps: 0.22
+    mot.max_angular_rps: 2.84
+
+    # MOT-001 / MOT-002: measured speed limits -> S4.
+    # Deliberately looser than the commanded limits: these exist to catch a
+    # physically runaway base, not control overshoot, so they must not fire on
+    # odometry noise. Command vs measured is the point of these two rules.
+    mot.max_actual_linear_mps: 0.30
+    mot.max_actual_angular_rps: 3.50
+
+    # MOT-003: acceleration limits for a single command frame
+    mot.max_linear_accel_mps2: 0.50
+    mot.max_angular_accel_rps2: 3.00
+    # Interval floor for the finite difference. Without it, two command frames
+    # arriving almost together produce a phantom acceleration and the rule
+    # misfires; RSS-003 MOT-003 calls this out explicitly.
+    mot.min_accel_dt_sec: 0.020
+
+    # MOT-004: differential-drive geometry and single-wheel limit.
+    # v_wheel_max equals the rated linear speed so that the rated speed stays
+    # reachable at zero yaw rate. Measure W and r_wheel before trusting the
+    # reachability verdict -- an inaccurate pair makes it wrong both ways.
+    mot.wheel_separation_m: 0.160
+    mot.wheel_radius_m: 0.033
+    mot.max_wheel_speed_mps: 0.22
+
+    # MOT-001..004 are statements about the commanded value, so they only apply
+    # while a fresh command exists. RSS-003 §0 sets this to 0.50 s (CMD-007).
+    mot.command_timeout_sec: 0.50
