@@ -1,0 +1,75 @@
+# Runtime parameters for the robot_safety_monitor node.
+#
+# Dotted names under /robot_safety_monitor. Load with:
+#   ros2 run robot_safety_monitor monitor --ros-args --params-file <this file>
+#
+# The defaults here match the analyzer defaults and the Gazebo TurtleBot3
+# setup, so this file documents the tuned baseline rather than changing it.
+/**:
+  ros__parameters:
+    # --- identity -----------------------------------------------------------
+    robot_id: turtlebot3_burger
+    world_name: turtlebot3_world
+
+    # --- output -------------------------------------------------------------
+    publish_rate_hz: 10.0
+    # True when /clock drives the node clock (Gazebo, rosbag with sim time).
+    expect_sim_time: true
+    # Window used to estimate the measured arrival rate of each topic.
+    rate_window_sec: 5.0
+
+    # --- monitored topics ---------------------------------------------------
+    # Set a topic to "" to declare the source absent on this platform.
+    topic.odom: /odom
+    topic.scan: /scan
+    topic.imu: /imu
+    topic.joint_states: /joint_states
+    topic.cmd_vel: /cmd_vel
+    topic.battery: ""
+    # The Gazebo TurtleBot3 publishes no battery topic, so battery monitoring
+    # is off by default; enabling it without a publisher yields a permanent
+    # BATTERY_STALE finding by design.
+    battery.monitor: false
+    # Command monitoring is ON by default: a commander that was running and then
+    # went quiet is a fault the safety layer must see, and the monitor is often
+    # started before any teleop exists. Set this to false only on a platform that
+    # genuinely has no velocity commander, where the source is then excluded from
+    # the health assessment instead of being reported as failing.
+    command.monitor: true
+
+    # --- watchdog timeouts [s], measured on the wall clock ------------------
+    timeout.odom_sec: 1.0
+    timeout.scan_sec: 1.0
+    timeout.imu_sec: 1.0
+    timeout.joint_states_sec: 2.0
+    timeout.cmd_vel_sec: 1.0
+    timeout.battery_sec: 5.0
+
+    # --- battery thresholds [state of charge 0..1] --------------------------
+    battery.warn_fraction: 0.30
+    battery.critical_fraction: 0.15
+
+    # --- attitude thresholds [deg] ------------------------------------------
+    # 15 deg is a reasonable "climbing / tipped" hint for a small diff-drive
+    # base; 45 deg means it is almost certainly not on its wheels.
+    tilt.warn_deg: 15.0
+    tilt.critical_deg: 45.0
+
+    # --- lidar proximity thresholds [m] -------------------------------------
+    # The front sector is the ground the robot is about to occupy.
+    front_sector_half_angle_rad: 0.35
+    obstacle.warn_range_m: 0.30
+    obstacle.critical_range_m: 0.15
+
+    # --- odometry plausibility ---------------------------------------------
+    odom.pose_cov_warn: 0.05
+    odom.twist_cov_warn: 0.05
+
+    # --- intent vs execution ------------------------------------------------
+    command.deadband_linear: 0.02
+    command.deadband_angular: 0.10
+    command.tolerance_fraction: 0.5
+    command.motion_threshold: 0.01
+
+    # --- drivetrain activity ------------------------------------------------
+    joints.velocity_threshold: 0.001

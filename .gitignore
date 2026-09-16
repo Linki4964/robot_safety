@@ -1,0 +1,21 @@
+# colcon / ament build artifacts
+build/
+install/
+log/
+
+# ROS runtime artifacts created when HOME is not writable
+.roslog/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# Local development harness (message stubs, live checks, vendored build deps)
+.dsh_test/
+
+# Editors
+.vscode/
+.idea/
+*.swp
