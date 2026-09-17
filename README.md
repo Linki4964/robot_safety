@@ -1,33 +1,39 @@
-# robot_safety — 机器人安全监控与门控
+robot_safety — 机器人安全监控与门控系统
+一、项目简介
+本项目是面向 TurtleBot3 / Gazebo 仿真平台的轻量级机器人安全防护栈，架构设计参考 ISO 13849 功能安全标准（第 5、6 章用于安全检测机制设计，第 10 章用于验证与确认测试）。
+系统采用关注点分离（SoC）原则，划分为观测、裁决、强制执行三层架构：
+    * 观测层（monitor）：以 10 Hz 周期发布 RobotState 状态快照，校验各话题时序有效性与底层物理量的合理性；
+    *  裁决层（motion_safety）：实时监测线速度、角速度、加速度及差速运动学约束，仅负责超限识别与告警输出，不直接干预运动；
+    * 门控层（safety_gate）：串接于 /cmd_vel 控制链路并强制执行裁决指令，遵循“只减不增”的失效安全（Fail-Safe）原则，仅执行三种确定性操作：原样放行、零速制动或指令丢弃/拒绝。
 
-## 一、项目简介
+二、功能演示
+![alt text](animation_edited-1.gif)
+超速保护（角速度）：当检测到指令或实际角速度超出设定阈值时，门控机制即刻触发并介入刹停。
+![alt text](animation_edited1-1.gif)
+超速保护（线速度）：当线速度超出标定安全范围或加速度突变时，系统自动切断速度输出并强制停机。
 
-本项目是一个面向 TurtleBot3 / Gazebo 的机器人安全栈，参考标准 ISO 13849（安全检测标准设计参考第 5 章、第 6 章，验证测试参考第 10 章），涵盖**观测、裁决、强制执行**三个部分：观测层（`monitor`）以 10 Hz 发布 `RobotState` 快照，判断各话题数据是否可信、物理量是否合理；裁决层（`motion_safety`）识别速度、加速度与差速运动学超限，只识别、只告警，不做任何处置；门控层（`safety_gate`）在 `/cmd_vel` 路径上强制执行裁决结果，只做原样放行、发布零速、拒绝三件事之一，只减不增。
+三、快速上手
+1. 编译与环境配置
 
-## 二、项目演示
-
-![robot safety demo](TMP_RECORDING.gif)
-
-录屏内容为 Gazebo 中的 TurtleBot3（burger）及其 360° 激光扫描可视化：机器人静止停在生成点，蓝色射线为其激光测距结果，全部延伸至量程上限而无任何回波被障碍物截断，对应"前方空阔、无障碍"的正常状态。此时监控的判定为 `status=OK` 且无告警，位姿与生成点一致。
-
-## 三、启动方法
-
-```bash
+```Bash
 cd ~/robot-safety
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install && source install/setup.bash
 ```
-
-```bash
-# 终端 A：仿真
+2. 启动仿真与安全节点
+```Bash
+# 终端 A：启动 Gazebo 仿真环境
 export TURTLEBOT3_MODEL=burger
 ros2 launch turtlebot3_gazebo turtlebot3_world.launch.py
 
-# 终端 B：监控 + 门控 + 状态显示
+# 终端 B：启动安全系统（监控 + 裁决 + 门控）
 ros2 launch robot_safety_monitor safety_gate.launch.py
 ```
+3. 查看系统状态
+```Bash
+# 持续监听摘要信息（状态跳变时自动打印详细排查日志）
+ros2 run robot_safety_monitor state_reporter
 
-```bash
-ros2 run robot_safety_monitor state_reporter             # 持续摘要，状态跳变时打印详情
-ros2 run robot_safety_monitor state_reporter --once -v   # 单次全量快照
+# 单次捕获全量系统快照
+ros2 run robot_safety_monitor state_reporter --once -v
 ```
