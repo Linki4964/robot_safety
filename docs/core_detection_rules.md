@@ -78,16 +78,16 @@ precondition:
   - velocity_valid == true              # 有可判定的速度值（指令或里程计）
 
 input:
-  - cmd_linear_velocity                 # /cmd_vel.linear.x
-  - odom_linear_velocity                # /odom.twist.linear 合成速度
+  - cmd_linear_velocity                 # /cmd_vel.linear.x,上层控制器速度
+  - odom_linear_velocity                # /odom.twist.linear 合成速度，实际速度
 
-model:
+model: # 数学模型
   limits:
     v_max_cmd: 0.22                     # m/s，制造商额定
     v_max_actual: 0.30                  # m/s，超出此值判定为空转/失控（S4）
   measured:
-    v_cmd: abs(cmd_linear_velocity)
-    v_actual: abs(odom_linear_velocity)
+    v_cmd: abs(cmd_linear_velocity)     #取指令速度的绝对值
+    v_actual: abs(odom_linear_velocity) #取实际速度的绝对值
 
 condition:
   cmd_exceeded:    v_cmd > v_max_cmd            # 指令超限 → S2
@@ -95,15 +95,15 @@ condition:
 
 severity: S2          # 指令超限；实测超限升为 S4
 
-response:
+response: #系统响应
   action: REJECT_COMMAND_AND_DEGRADE   # 拒绝指令 + 限速，而非静默截断
   latch: false
 
-diagnostics:
+diagnostics: #诊断码
   reason: MOT_LIN_VEL_EXCEED           # 指令超限
   escalate: MOT_ACTUAL_VEL_EXCEED      # 实测超限
 
-validation:
+validation: # 验证方式
   method: boundary_injection_test      # 注入 v=0.23，断言被拒
   measured: true
 ```
@@ -213,7 +213,6 @@ validation:
 - **`dt >= 0.02` 的必要性**：若两帧间隔极短（如重复帧、时间戳异常），`Δv/dt` 会算出极大的假加速度。设置间隔下限可抑制这类误报。
 - **注意**：本判据用**有限差分**近似，对噪声敏感。若指令噪声大，建议先对指令做滑动平均再差分，否则会频繁误报。
 
----
 
 ### MOT-004 差速运动学约束
 
@@ -267,10 +266,10 @@ validation:
 
 ## 2. 碰撞与距离 COL
 
-### COL-005 停止距离不足（核心判据）
+### COL-001 停止距离不足（核心判据）
 
 ```yaml
-id: COL-005
+id: COL-001
 name: Insufficient Stopping Distance
 category: COLLISION
 
