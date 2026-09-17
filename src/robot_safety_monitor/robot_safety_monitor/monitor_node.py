@@ -80,6 +80,7 @@ from .analyzer import (
     MotionSample,
     ObservationTracker,
     RangeSample,
+    classify_code,
     quaternion_to_roll_pitch,
     quaternion_to_yaw,
     tilt_angle_deg,
@@ -580,6 +581,10 @@ class StatePublisher(Node):
             SOURCE_JOINTS: str(
                 self.declare_parameter("topic.joint_states", "/joint_states").value
             ),
+            # The gate arbitrates /cmd_vel in place, so the command stream the
+            # monitor must judge is that same topic. It shows the gated stream,
+            # which is the command actually applied and therefore the right thing
+            # to evaluate for intent/execution consistency.
             SOURCE_COMMAND: str(
                 self.declare_parameter("topic.cmd_vel", "/cmd_vel").value
             ),
@@ -614,21 +619,20 @@ class StatePublisher(Node):
                 self, self.tracker, self.config, topics[SOURCE_JOINTS]
             )
         )
-        # Command monitoring is opt-out. By default the source is watched, so a
-        # commander that was running and then died is reported as COMMAND_STALE:
-        # that is a real fault the safety layer must see. Set command.monitor
-        # to false only on a platform that genuinely has no velocity commander,
-        # where the source is then excluded from the assessment entirely.
-        if self.config.monitor_command:
-            self._add_collector(
-                VelocityCommandCollector(
-                    self, self.tracker, self.config, topics[SOURCE_COMMAND]
-                )
+        # The command stream is ALWAYS subscribed. Whether a quiet command source
+        # is a fault is a separate question, and conflating the two is a trap that
+        # was walked into once already: setting command.monitor=false also removed
+        # the subscription, so the gate had no command to judge and passed every
+        # over-limit command -- a silent loss of the entire interlock. Observation
+        # and judgement are configured separately on purpose.
+        self._add_collector(
+            VelocityCommandCollector(
+                self, self.tracker, self.config, topics[SOURCE_COMMAND]
             )
-        else:
-            self.tracker.declare_not_monitored(
-                SOURCE_COMMAND, self.config.command_timeout_sec
-            )
+        )
+        if not self.config.monitor_command:
+            # Observed, but its staleness is not a fault (see analyzer.Config).
+            self.tracker.require(SOURCE_COMMAND).required = False
         # Battery is optional: monitoring it is opt-in because the Gazebo
         # TurtleBot3 publishes no battery topic, and an unmonitored source must
         # not show up as a permanent failure.
@@ -916,6 +920,12 @@ class StatePublisher(Node):
             message.warnings.append(finding.code)
             message.warning_severity.append(int(finding.severity))
             message.warning_detail.append(finding.detail)
+            # Category and originating rule are resolved here, from the single
+            # classifier, so a report can group every fault the same way no
+            # matter which subsystem produced it.
+            category, rule_id = classify_code(finding.code)
+            message.warning_category.append(category)
+            message.warning_rule_id.append(rule_id)
 
         message.motion_expected = bool(motion_expected)
         message.armed = bool(motion_expected and assessment.status <= 1)
@@ -929,6 +939,7 @@ class StatePublisher(Node):
             entry.header.frame_id = "base_footprint"
             entry.code = alert.code
             entry.rule_id = alert.rule_id
+            entry.category = alert.category
             entry.level = int(alert.level)
             entry.severity = int(alert.severity)
             entry.detail = alert.detail

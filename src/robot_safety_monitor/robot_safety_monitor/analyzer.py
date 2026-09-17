@@ -229,13 +229,17 @@ class Config:
         SOURCE_BATTERY,
     )
     monitor_battery: bool = False
-    # Command monitoring is on by default, because a commander that was
-    # publishing and then stopped is a genuine fault that the safety layer must
-    # see. Note the consequence: with no publisher on /cmd_vel at all, the
-    # snapshot carries a permanent COMMAND_STALE finding. That is the honest
-    # reading ("nobody is commanding this robot"), and the brief documents how to
-    # silence it on a platform that has no commander by design.
-    monitor_command: bool = True
+    # Whether the command stream is *judged* for staleness. It is observed either
+    # way -- the gate needs the current intent -- but a quiet command source is
+    # not a fault: letting go of the teleop key, finishing a navigation goal, or
+    # having no controller connected at all are normal states, not failures.
+    #
+    # The protective response still exists, but it belongs to the gate, which
+    # stops the robot when the intent stream goes idle. That is an *action*, not
+    # an *alarm*: nothing is wrong, the robot simply has no one telling it to
+    # move. Reporting it as a fault produced a permanent COMMAND_STALE finding
+    # whenever nothing was commanding, which is alarm fatigue by construction.
+    monitor_command: bool = False
 
     # --- battery thresholds --------------------------------------------------
     battery_warn_fraction: float = 0.30
@@ -525,11 +529,71 @@ class Finding:
     ``severity`` uses the same codes as the status levels so a consumer can
     compare findings and statuses directly. ``code`` is the stable identifier
     that the step-2 state machine will switch on; ``detail`` is for humans.
+
+    ``category`` and ``rule_id`` are intentionally *derived*, not stored: the
+    single classifier :func:`classify_code` resolves them from the code. Storing
+    them per finding would mean every call site could drift or forget them, and
+    the mapping between a code and its safety category belongs in one place.
     """
 
     code: str
     severity: int
     detail: str
+
+
+# --------------------------------------------------------------------------- #
+# Fault classification
+# --------------------------------------------------------------------------- #
+# Safety categories, per RSS-003 §4.1. These are the classes a report groups
+# faults by, so an operator (and the state machine) can tell whether a problem is
+# about motion, collision, sensing, command, localization, communication or the
+# system itself.
+CATEGORY_MOT = "MOT"   # 运动安全
+CATEGORY_COL = "COL"   # 碰撞与距离
+CATEGORY_SEN = "SEN"   # 传感器
+CATEGORY_CMD = "CMD"   # 指令与控制
+CATEGORY_LOC = "LOC"   # 定位
+CATEGORY_COM = "COM"   # 通信
+CATEGORY_SYS = "SYS"   # 系统完整性
+
+CATEGORY_NAMES = {
+    CATEGORY_MOT: "motion safety",
+    CATEGORY_COL: "collision & distance",
+    CATEGORY_SEN: "sensor",
+    CATEGORY_CMD: "command & control",
+    CATEGORY_LOC: "localization",
+    CATEGORY_COM: "communication",
+    CATEGORY_SYS: "system integrity",
+}
+
+CATEGORY_ORDER = (
+    CATEGORY_MOT,
+    CATEGORY_COL,
+    CATEGORY_SEN,
+    CATEGORY_CMD,
+    CATEGORY_LOC,
+    CATEGORY_COM,
+    CATEGORY_SYS,
+)
+
+def classify_code(code: str) -> Tuple[str, str]:
+    """Return ``(category, rule_id)`` for a fault code.
+
+    Falls back to the code's leading token when it is a known category prefix --
+    the MOT_* alerts, for instance, are all motion-safety faults by construction
+    -- and otherwise reports the fault as a monitor-internal system-integrity
+    finding with an empty rule id. That default is deliberate: an unrecognised
+    code is a gap in this table, and calling it a system fault is the honest
+    reading, whereas silently filing it under the wrong category would be worse
+    than admitting ignorance.
+    """
+    known = _CODE_CLASSIFICATION.get(code)
+    if known is not None:
+        return known
+    prefix = code.split("_", 1)[0].upper()
+    if prefix in CATEGORY_ORDER:
+        return prefix, ""
+    return CATEGORY_SYS, ""
 
 
 # Finding codes, grouped by the layer of the robot they belong to.
@@ -552,6 +616,41 @@ CODE_POSE_UNCERTAIN = "POSE_UNCERTAIN"
 CODE_TWIST_UNCERTAIN = "TWIST_UNCERTAIN"
 CODE_COMMAND_MISMATCH = "COMMAND_MISMATCH"
 CODE_UNEXPECTED_MOTION = "UNEXPECTED_MOTION"
+
+
+# Explicit code -> (category, spec rule) table.
+#
+# Category cannot be inferred from the name alone: several codes carry no usable
+# prefix at all -- COMMAND_MISMATCH and UNEXPECTED_MOTION say "command" but are
+# motion-safety failures of the robot, ODOM_STALE is a sensor-timeout
+# observation, and BATTERY_LOW is a system-integrity concern. Guessing from the
+# prefix would mis-file all of those, so the classification is stated.
+_CODE_CLASSIFICATION: Dict[str, Tuple[str, str]] = {
+    # --- data-link findings ------------------------------------------------
+    CODE_ODOM_STALE: (CATEGORY_SEN, "SEN-001"),
+    CODE_ODOM_MISSING: (CATEGORY_SEN, "SEN-001"),
+    CODE_SCAN_STALE: (CATEGORY_SEN, "SEN-001"),
+    CODE_SCAN_MISSING: (CATEGORY_SEN, "SEN-001"),
+    CODE_IMU_STALE: (CATEGORY_SEN, "SEN-001"),
+    CODE_IMU_MISSING: (CATEGORY_SEN, "SEN-001"),
+    CODE_JOINTS_STALE: (CATEGORY_SEN, "SEN-001"),
+    # --- physical plausibility --------------------------------------------
+    CODE_POSE_UNCERTAIN: (CATEGORY_SEN, "SEN-007"),
+    CODE_TWIST_UNCERTAIN: (CATEGORY_SEN, "SEN-007"),
+    CODE_TILT_HIGH: (CATEGORY_MOT, "MOT-010"),
+    CODE_TILT_CRITICAL: (CATEGORY_MOT, "MOT-010"),
+    # --- scene facts -------------------------------------------------------
+    CODE_OBSTACLE_NEAR: (CATEGORY_COL, "COL-001"),
+    CODE_OBSTACLE_CRITICAL: (CATEGORY_COL, "COL-002"),
+    # --- power -------------------------------------------------------------
+    CODE_BATTERY_STALE: (CATEGORY_SYS, "SEN-014"),
+    CODE_BATTERY_LOW: (CATEGORY_SYS, "SEN-014"),
+    CODE_BATTERY_CRITICAL: (CATEGORY_SYS, "SEN-014"),
+    # --- intent vs execution ----------------------------------------------
+    CODE_COMMAND_MISMATCH: (CATEGORY_MOT, "MOT-012"),
+    CODE_UNEXPECTED_MOTION: (CATEGORY_MOT, "CMD-012"),
+}
+
 
 
 @dataclass
@@ -1033,11 +1132,21 @@ class Analyzer:
         health = self._tracker.health(now)
         statuses: List[int] = []
         for name, (status, reason) in health.items():
+            # A command source going quiet is normal operation, so it is observed
+            # and reported in the source arrays but contributes neither a finding
+            # nor to the aggregate verdict. Judgement is skipped here rather than
+            # the subscription being removed (see monitor_node): the gate needs
+            # the command itself, and disabling observation to silence an alert
+            # once cost the whole interlock.
+            staleness_is_normal = (
+                name == SOURCE_COMMAND and not self._config.monitor_command
+            )
+            if not staleness_is_normal:
+                statuses.append(status)
+
             assessment.source_status[name] = status
             assessment.source_reason[name] = reason
-            statuses.append(status)
-
-            if status in (OK, UNKNOWN):
+            if status in (OK, UNKNOWN) or staleness_is_normal:
                 continue
 
             # Two failure shapes need distinct codes, because the recovery

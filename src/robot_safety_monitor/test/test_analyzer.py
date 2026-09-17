@@ -673,6 +673,31 @@ class TestAnalyzerAssessment:
         assert assessment.has(az.CODE_ODOM_MISSING)
         assert assessment.has(az.CODE_SCAN_MISSING)
 
+    def test_quiet_command_source_is_not_a_finding(self):
+        # A command source that stops is normal operation: no finding, and the
+        # aggregate verdict stays OK.
+        config = az.Config()
+        config.monitor_command = False
+        tracker = observed_tracker(config=config)
+        analyzer = az.Analyzer(config, tracker)
+        # Everything delivered, then the command stream alone goes quiet.
+        assessment = analyzer.assess(healthy_state(now=102.0), now=102.0)
+        assert not assessment.has(az.CODE_COMMAND_STALE)
+        # The source is still reported, because it is still observed.
+        assert az.SOURCE_COMMAND in assessment.source_status
+        assert assessment.source_status[az.SOURCE_COMMAND] == az.STALE
+        # Only the command source is exempt; the others still judge normally.
+        assert assessment.has(az.CODE_ODOM_STALE)
+
+    def test_command_staleness_still_judged_when_monitoring_is_on(self):
+        # The counterpart: on a platform that wants it, the finding still fires.
+        config = az.Config()
+        config.monitor_command = True
+        tracker = observed_tracker(config=config)
+        analyzer = az.Analyzer(config, tracker)
+        assessment = analyzer.assess(healthy_state(now=102.0), now=102.0)
+        assert assessment.has(az.CODE_COMMAND_STALE)
+
     def test_not_monitored_sources_do_not_degrade_the_assessment(self):
         config = az.Config()
         tracker = observed_tracker()

@@ -370,7 +370,9 @@ class TestAggregation:
         assert ms.MotionSafetyMonitor.worst_severity([low, high]) == az.CRITICAL
 
     def test_level_to_severity_mapping(self):
-        assert ms.level_to_severity(ms.LEVEL_S1) == az.STALE
+        # A notice must not degrade the aggregate verdict: S1 reports UNKNOWN,
+        # which is the "no impact" level, not STALE.
+        assert ms.level_to_severity(ms.LEVEL_S1) == az.UNKNOWN
         assert ms.level_to_severity(ms.LEVEL_S2) == az.ERROR
         assert ms.level_to_severity(ms.LEVEL_S3) == az.CRITICAL
         assert ms.level_to_severity(ms.LEVEL_S4) == az.CRITICAL

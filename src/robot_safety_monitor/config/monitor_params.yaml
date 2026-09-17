@@ -24,6 +24,8 @@
     topic.scan: /scan
     topic.imu: /imu
     topic.joint_states: /joint_states
+    # The gate arbitrates /cmd_vel in place, so this is both the command source
+    # topic and the gated stream the robot applies.
     topic.cmd_vel: /cmd_vel
     topic.battery: ""
     # The Gazebo TurtleBot3 publishes no battery topic, so battery monitoring

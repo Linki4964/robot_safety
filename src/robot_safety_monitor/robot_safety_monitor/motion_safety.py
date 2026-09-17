@@ -66,7 +66,16 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Deque, List, Optional, Tuple
 
-from .analyzer import CRITICAL, ERROR, OK, STALE, UNKNOWN, MonitorState, worst_status
+from .analyzer import (
+    CATEGORY_MOT,
+    CRITICAL,
+    ERROR,
+    OK,
+    STALE,
+    UNKNOWN,
+    MonitorState,
+    worst_status,
+)
 
 # --------------------------------------------------------------------------- #
 # Alert codes (RSS-003 §1 `diagnostics` fields; naming per RSS-001 appendix B)
@@ -85,9 +94,20 @@ LEVEL_S2 = 2
 LEVEL_S3 = 3
 LEVEL_S4 = 4
 
+LEVEL_NAMES = {
+    LEVEL_S1: "S1",
+    LEVEL_S2: "S2",
+    LEVEL_S3: "S3",
+    LEVEL_S4: "S4",
+}
+
 _LEVEL_TO_SEVERITY = {
-    LEVEL_S1: STALE,      # notice: does not degrade the source-health verdict
-    LEVEL_S2: ERROR,      # warning
+    # S1 is a notice: RSS-001 §4.3 gives it "target state: unchanged", so it must
+    # not drag the aggregate verdict away from OK. UNKNOWN is the value for "no
+    # impact", which is exactly what a notice has; using a non-OK level here
+    # would make every informational alert look like a degradation.
+    LEVEL_S1: UNKNOWN,
+    LEVEL_S2: ERROR,      # warning: DEGRADED + speed envelope
     LEVEL_S3: CRITICAL,   # protective stop
     LEVEL_S4: CRITICAL,   # safe/emergency stop
 }
@@ -170,6 +190,10 @@ class MotionAlert:
     escalated: bool = False
     stamp_sec: float = 0.0
     wall_time_sec: float = 0.0
+    # Every rule in this module belongs to the motion-safety category, but the
+    # field is carried explicitly so a report can group MOT alerts and analyzer
+    # findings through one uniform path instead of special-casing their origin.
+    category: str = CATEGORY_MOT
 
     @property
     def severity(self) -> int:
@@ -264,6 +288,42 @@ class _CommandSample:
     angular: float
     stamp: float
     wall: float
+
+
+# --------------------------------------------------------------------------- #
+# Command-level limit evaluation (shared by the monitor and the gate)
+# --------------------------------------------------------------------------- #
+def command_limit_alerts(
+    linear: float,
+    angular: float,
+    config: MotionSafetyConfig,
+) -> List[Tuple[str, str, int]]:
+    """Stateless check of one command against MOT-001/002 (command half) and MOT-004.
+
+    Returns ``(code, rule_id, level)`` triples. Being stateless is the point: a
+    gate must be able to ask "is this command acceptable" of the command it is
+    holding, on every tick, without depending on whether a transient monitor
+    alert happened to fire on that particular frame. An earlier gate design
+    consumed the monitor's alert array directly and oscillated between passing
+    and blocking, because MOT_TWIST_INFEASIBLE fires on the frame the command
+    arrives and clears on the next one.
+
+    The monitor calls this too, so both components judge by the same rules.
+    """
+    alerts: List[Tuple[str, str, int]] = []
+    linear = abs(float(linear))
+    angular = abs(float(angular))
+
+    if linear > config.max_linear_mps:
+        alerts.append((CODE_LIN_VEL_EXCEED, "MOT-001", LEVEL_S2))
+    if angular > config.max_angular_rps:
+        alerts.append((CODE_ANG_VEL_EXCEED, "MOT-002", LEVEL_S2))
+
+    reachable, _required = twist_is_reachable(linear, angular, config)
+    if not reachable:
+        alerts.append((CODE_TWIST_INFEASIBLE, "MOT-004", LEVEL_S2))
+
+    return alerts
 
 
 class MotionSafetyMonitor:

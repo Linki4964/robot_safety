@@ -10,6 +10,7 @@ std_msgs/Header header
 
 string code                  # stable alert identifier, e.g. "MOT_LIN_VEL_EXCEED"
 string rule_id               # spec rule that fired, e.g. "MOT-001"
+string category              # spec category: MOT/COL/SEN/CMD/LOC/COM/SYS
 uint8 level                  # spec level S1..S4, see constants below
 uint8 severity               # same level mapped onto TopicHealth's constants
 string detail                # human readable evidence, including the numbers

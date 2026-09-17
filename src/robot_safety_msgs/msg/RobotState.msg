@@ -36,6 +36,12 @@ string[] source_reason       # human readable reason when a source is not OK
 string[] warnings            # active finding identifiers, e.g. "ODOM_STALE"
 uint8[] warning_severity     # severity per warning, parallel to warnings
 string[] warning_detail      # human readable explanation per warning
+# A fault code alone does not say which class of problem it is, and several codes
+# (COMMAND_MISMATCH, UNEXPECTED_MOTION, ...) carry no category prefix at all, so
+# the class is stated explicitly rather than left to be guessed from the name.
+# Category is one of MOT/COL/SEN/CMD/LOC/COM/SYS (RSS-003 §4.1).
+string[] warning_category    # category per warning, parallel to warnings
+string[] warning_rule_id     # originating spec rule per warning, e.g. "CMD-012"
 bool motion_expected         # fresh velocity command within command_timeout
 bool armed                   # motion is allowed by the monitor (step 2 owns policy)
 

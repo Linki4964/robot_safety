@@ -57,6 +57,7 @@ setup(
         'console_scripts': [
             'monitor = robot_safety_monitor.monitor_node:main',
             'state_reporter = robot_safety_monitor.state_reporter:main',
+            'safety_gate = robot_safety_monitor.safety_gate_node:main',
         ],
     },
 )

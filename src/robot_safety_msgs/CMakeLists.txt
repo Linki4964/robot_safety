@@ -24,6 +24,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/VelocityCommand.msg"
   "msg/JointState.msg"
   "msg/MotionAlert.msg"
+  "msg/SafetyGateState.msg"
   DEPENDENCIES
     std_msgs
     geometry_msgs
